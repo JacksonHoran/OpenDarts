@@ -3,12 +3,16 @@ import { reactive, computed } from 'vue'
 // Numbers in play for Cricket (plus the bull, value 25), highest first.
 export const CRICKET_NUMBERS = [20, 19, 18, 17, 16, 15, 25]
 
+// Hits on your own number needed to become a Killer.
+export const KILLER_TO_BECOME = 3
+
 // A single reactive game store shared across the app.
 const state = reactive({
   started: false,
-  mode: 'x01',          // 'x01' | 'cricket'
+  mode: 'x01',          // 'x01' | 'cricket' | 'killer'
   startScore: 501,      // x01 only
   doubleOut: false,     // x01 only
+  killerLives: 3,       // killer only: starting lives
   legsToWin: 1,
   players: [],          // see freshPlayer()
   turnPointer: 0,       // index of player whose turn it is
@@ -32,6 +36,11 @@ function freshPlayer(name, i) {
     // cricket
     marks: { 20: 0, 19: 0, 18: 0, 17: 0, 16: 0, 15: 0, 25: 0 },
     points: 0,
+    // killer
+    number: 0,          // assigned target number
+    lives: 0,
+    isKiller: false,
+    killerProgress: 0,  // hits on own number so far (0..KILLER_TO_BECOME)
   }
 }
 
@@ -42,6 +51,9 @@ function resetPlayerForLeg(p) {
   p.score = state.startScore
   p.marks = { 20: 0, 19: 0, 18: 0, 17: 0, 16: 0, 15: 0, 25: 0 }
   p.points = 0
+  p.lives = state.killerLives
+  p.isKiller = false
+  p.killerProgress = 0
 }
 
 function snapshot() {
@@ -61,12 +73,23 @@ function pushHistory() {
   if (state.history.length > 300) state.history.shift()
 }
 
-function startGame({ mode, startScore, doubleOut, legsToWin, playerNames }) {
+function startGame({
+  mode, startScore, doubleOut, legsToWin, playerNames,
+  playerNumbers, startLives,
+}) {
   state.mode = mode || 'x01'
   state.startScore = startScore
   state.doubleOut = doubleOut
+  state.killerLives = startLives || 3
   state.legsToWin = legsToWin
-  state.players = playerNames.map((name, i) => freshPlayer(name, i))
+  state.players = playerNames.map((name, i) => {
+    const p = freshPlayer(name, i)
+    if (state.mode === 'killer') {
+      p.number = playerNumbers ? playerNumbers[i] : 0
+      p.lives = state.killerLives
+    }
+    return p
+  })
   state.turnPointer = 0
   state.turnDarts = []
   state.turnStartScore = startScore
@@ -106,9 +129,15 @@ const canThrow = computed(
 )
 
 function advanceTurn() {
-  state.turnPointer = (state.turnPointer + 1) % state.players.length
+  // In Killer, skip players who have been eliminated (0 lives).
+  let next = state.turnPointer
+  for (let k = 0; k < state.players.length; k++) {
+    next = (next + 1) % state.players.length
+    if (state.mode !== 'killer' || state.players[next].lives > 0) break
+  }
+  state.turnPointer = next
   state.turnDarts = []
-  state.turnStartScore = state.players[state.turnPointer].score
+  state.turnStartScore = state.players[next].score
 }
 
 // Register one dart. `dart` = { value, multiplier, label, score }
@@ -119,6 +148,7 @@ function throwDart(dart) {
   state.turnDarts.push(dart)
 
   if (state.mode === 'cricket') applyCricketDart(dart)
+  else if (state.mode === 'killer') applyKillerDart(dart)
   else applyX01Dart(dart)
 }
 
@@ -200,6 +230,60 @@ function maxOpponentPoints(player) {
   )
 }
 
+// ---- Killer ----
+function applyKillerDart(dart) {
+  const thrower = currentPlayer.value
+  const n = dart.value
+  const mult = dart.multiplier // single=1, double=2, triple=3
+
+  // Bull (25) and misses (0) belong to no target number — they just use a dart.
+  if (n !== 0 && n !== 25) {
+    if (!thrower.isKiller) {
+      // Building up: only your own number counts toward killer status.
+      if (n === thrower.number) {
+        thrower.killerProgress = Math.min(
+          KILLER_TO_BECOME,
+          thrower.killerProgress + mult,
+        )
+        if (thrower.killerProgress >= KILLER_TO_BECOME) {
+          thrower.isKiller = true
+          state.message = `🔪 ${thrower.name} is now a KILLER!`
+        } else {
+          state.message = `${thrower.name}: ${thrower.killerProgress}/${KILLER_TO_BECOME} to become a killer`
+        }
+      }
+    } else if (n === thrower.number) {
+      // As a killer, hitting your own number costs you lives.
+      thrower.lives = Math.max(0, thrower.lives - mult)
+      state.message = thrower.lives === 0
+        ? `💀 ${thrower.name} knocked themselves out!`
+        : `${thrower.name} hit their own number and lost ${mult} life${mult > 1 ? 'ves' : ''}!`
+    } else {
+      // As a killer, hitting a living opponent's number removes their lives.
+      const victim = state.players.find(
+        (p) => p.id !== thrower.id && p.number === n && p.lives > 0,
+      )
+      if (victim) {
+        victim.lives = Math.max(0, victim.lives - mult)
+        state.message = victim.lives === 0
+          ? `💀 ${thrower.name} eliminated ${victim.name}!`
+          : `${thrower.name} took ${mult} off ${victim.name} (${victim.lives} left)`
+      }
+    }
+  }
+
+  // Win: only one player left with lives.
+  const alive = state.players.filter((p) => p.lives > 0)
+  if (alive.length <= 1) {
+    winLeg(alive[0] || thrower)
+    return
+  }
+
+  // End the turn after 3 darts, or immediately if the thrower knocked
+  // themselves out.
+  if (state.turnDarts.length === 3 || thrower.lives <= 0) advanceTurn()
+}
+
 // ---- Shared leg / match handling ----
 function winLeg(player) {
   player.legs += 1
@@ -250,7 +334,9 @@ function rematch() {
     startScore: state.startScore,
     doubleOut: state.doubleOut,
     legsToWin: state.legsToWin,
+    startLives: state.killerLives,
     playerNames: state.players.map((p) => p.name),
+    playerNumbers: state.players.map((p) => p.number),
   })
 }
 

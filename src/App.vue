@@ -4,7 +4,8 @@ import GameSetup from './components/GameSetup.vue'
 import Dartboard from './components/Dartboard.vue'
 import Scoreboard from './components/Scoreboard.vue'
 import CricketBoard from './components/CricketBoard.vue'
-import { useGame } from './useGame.js'
+import KillerBoard from './components/KillerBoard.vue'
+import { useGame, KILLER_TO_BECOME } from './useGame.js'
 
 const {
   state, currentPlayer, turnTotal, turnMarks, canThrow,
@@ -12,13 +13,22 @@ const {
 } = useGame()
 
 const isCricket = computed(() => state.mode === 'cricket')
+const isKiller = computed(() => state.mode === 'killer')
 
 // Checkout route for the player currently throwing (X01 only, when on a finish).
 const currentCheckout = computed(() =>
-  !isCricket.value && currentPlayer.value
+  state.mode === 'x01' && currentPlayer.value
     ? checkoutHint(currentPlayer.value.score)
     : null,
 )
+
+// Guidance line for the current Killer thrower.
+const killerHint = computed(() => {
+  if (!isKiller.value || !currentPlayer.value) return ''
+  const p = currentPlayer.value
+  if (p.isKiller) return `KILLER — hit opponents' numbers`
+  return `Hit ${p.number} to become a killer (${p.killerProgress}/${KILLER_TO_BECOME})`
+})
 
 const dartsLeft = computed(() => 3 - state.turnDarts.length)
 const winner = computed(() =>
@@ -37,7 +47,9 @@ function onStart(config) {
     <header class="bar">
       <button class="ghost" type="button" @click="resetToSetup">← Setup</button>
       <div class="title">
-        {{ isCricket ? 'Cricket' : state.startScore + (state.doubleOut ? ' · Double out' : '') }}
+        <template v-if="isCricket">Cricket</template>
+        <template v-else-if="isKiller">Killer</template>
+        <template v-else>{{ state.startScore }}{{ state.doubleOut ? ' · Double out' : '' }}</template>
       </div>
       <button class="ghost" type="button" :disabled="state.history.length === 0" @click="undo">
         ↩ Undo
@@ -51,6 +63,13 @@ function onStart(config) {
           v-if="isCricket"
           :players="state.players"
           :active-id="currentPlayer ? currentPlayer.id : -1"
+        />
+        <KillerBoard
+          v-else-if="isKiller"
+          :players="state.players"
+          :active-id="currentPlayer ? currentPlayer.id : -1"
+          :max-lives="state.killerLives"
+          :to-become="KILLER_TO_BECOME"
         />
         <Scoreboard
           v-else
@@ -84,7 +103,10 @@ function onStart(config) {
             </div>
           </div>
           <div class="turn-sum">
-            <template v-if="isCricket">
+            <template v-if="isKiller">
+              <strong class="killer-hint">{{ killerHint }}</strong>
+            </template>
+            <template v-else-if="isCricket">
               This turn: <strong>{{ turnMarks }}</strong> mark{{ turnMarks === 1 ? '' : 's' }}
             </template>
             <template v-else>
@@ -224,6 +246,7 @@ function onStart(config) {
 }
 .turn-sum { font-size: 0.9rem; color: var(--text-dim); }
 .turn-sum strong { color: var(--text); font-size: 1.05rem; }
+.turn-sum .killer-hint { color: var(--accent); font-size: 0.98rem; }
 .dl { margin-left: 4px; }
 
 .message {

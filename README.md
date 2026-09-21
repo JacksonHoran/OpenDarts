@@ -20,6 +20,11 @@ spot on the board where each dart lands and the app keeps score for you.
     extra hits score its value in points until every opponent closes it too.
     Win by closing everything while not trailing on points. A marks grid shows
     `╱` / `✕` / `⊗` per number and dims numbers that are closed by everyone.
+  - **Killer** — each player is assigned a target number and starts with a set
+    number of lives (default 3). Hit your own number three times to become a
+    Killer, then hit opponents' numbers to knock out their lives. As a Killer,
+    hitting your *own* number costs you lives. Last player standing wins.
+    Target numbers can be assigned per player or shuffled randomly.
 - **1–6 players** with custom names — names are saved to `localStorage`, so
   they're pre-filled the next time you open the app.
 - **Best-of legs** — play a single leg or up to 7 (both modes).
@@ -49,4 +54,5 @@ npm run build && npm run preview
 - `src/components/GameSetup.vue` — game-mode and player configuration screen.
 - `src/components/Scoreboard.vue` — per-player score cards (X01).
 - `src/components/CricketBoard.vue` — the marks/points grid (Cricket).
+- `src/components/KillerBoard.vue` — the lives/killer-status cards (Killer).
 - `src/App.vue` — ties setup, board and the mode-specific scoreboard together.
