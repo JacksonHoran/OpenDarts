@@ -13,6 +13,13 @@ const {
 
 const isCricket = computed(() => state.mode === 'cricket')
 
+// Checkout route for the player currently throwing (X01 only, when on a finish).
+const currentCheckout = computed(() =>
+  !isCricket.value && currentPlayer.value
+    ? checkoutHint(currentPlayer.value.score)
+    : null,
+)
+
 const dartsLeft = computed(() => 3 - state.turnDarts.length)
 const winner = computed(() =>
   state.winnerId !== null ? state.players.find((p) => p.id === state.winnerId) : null,
@@ -52,6 +59,12 @@ function onStart(config) {
           :legs-to-win="state.legsToWin"
           :checkout-hint="checkoutHint"
         />
+
+        <!-- Big checkout callout so players can read the finish from across the room -->
+        <div v-if="currentCheckout && !winner" class="checkout-call">
+          <span class="co-label">{{ currentPlayer?.name }} checkout</span>
+          <span class="co-combo">{{ currentCheckout.join(' · ') }}</span>
+        </div>
 
         <div v-if="!winner" class="turn-panel">
           <div class="now-throwing">
@@ -159,6 +172,32 @@ function onStart(config) {
 }
 /* Push the turn panel / actions toward the bottom, scores at the top. */
 .turn-panel { margin-top: auto; }
+
+/* Prominent checkout suggestion under the score boxes. */
+.checkout-call {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px 10px;
+  border-radius: 14px;
+  background: rgba(220, 38, 38, 0.12);
+  border: 1px solid var(--accent);
+  text-align: center;
+}
+.co-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+.co-combo {
+  font-size: clamp(1.6rem, 7vw, 2.6rem);
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--accent);
+  letter-spacing: -0.01em;
+}
 .title { font-weight: 700; color: var(--text-dim); font-size: 0.9rem; }
 .ghost {
   padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line);
