@@ -4,6 +4,11 @@ dist-ssr
 *.local
 .DS_Store
 
+# SQLite database (runtime data)
+server/*.db
+server/*.db-journal
+server/*.db-wal
+
 # Editor/OS
 .vscode/*
 !.vscode/extensions.json

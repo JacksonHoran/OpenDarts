@@ -1,93 +1,131 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
+import { fetchPlayers, createPlayer } from '../api.js'
 
-const emit = defineEmits(['start'])
+const emit = defineEmits(['start', 'stats'])
 
-const NAMES_KEY = 'darts.playerNames'
-
-// Recognisable default target numbers for Killer (highest first).
-const NUMBER_POOL = [20, 19, 18, 17, 16, 15]
-
-// Restore the last-used player names (falls back to defaults).
-function loadNames() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(NAMES_KEY))
-    if (Array.isArray(saved) && saved.length >= 1) {
-      return saved.slice(0, 6).map((n) => String(n))
-    }
-  } catch {
-    // ignore unavailable/corrupt storage
-  }
-  return ['Player 1', 'Player 2']
-}
+const LINEUP_KEY = 'darts.lineup'
 
 const mode = ref('x01') // 'x01' | 'cricket' | 'killer'
 const startScore = ref(501)
 const doubleOut = ref(false)
 const legsToWin = ref(1)
-const players = ref(loadNames())
 const startLives = ref(3)
-// Killer target numbers, aligned by index with `players`.
-const playerNumbers = ref(players.value.map((_, i) => NUMBER_POOL[i] || i + 1))
+
+const profiles = ref([])       // [{ id, name, throw_count }]
+const selected = ref([])       // ordered list of profile names in the game
+const killerNumbers = ref({})  // { name: targetNumber }
+const newName = ref('')
+const loading = ref(true)
 
 const presets = [301, 501, 701]
+const minPlayers = computed(() => (mode.value === 'killer' ? 2 : 1))
 
-const hasDuplicateNumbers = computed(() => {
-  const used = playerNumbers.value.slice(0, players.value.length)
-  return new Set(used).size !== used.length
+function loadLineup() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LINEUP_KEY))
+    if (Array.isArray(saved)) return saved.map(String)
+  } catch {
+    /* ignore */
+  }
+  return []
+}
+
+onMounted(async () => {
+  profiles.value = await fetchPlayers()
+  const known = new Set(profiles.value.map((p) => p.name))
+  const remembered = loadLineup().filter((n) => known.has(n))
+  selected.value = remembered.length
+    ? remembered.slice(0, 6)
+    : profiles.value.slice(0, 2).map((p) => p.name)
+  syncKillerNumbers()
+  loading.value = false
 })
 
-// Persist names whenever they change (add/remove/edit).
-watch(
-  players,
-  (val) => {
-    try {
-      localStorage.setItem(NAMES_KEY, JSON.stringify(val))
-    } catch {
-      // ignore write failures (private mode, blocked storage)
-    }
-  },
-  { deep: true },
-)
-
-function firstUnusedNumber() {
-  for (let n = 20; n >= 1; n--) {
-    if (!playerNumbers.value.includes(n)) return n
+watch(selected, (val) => {
+  try {
+    localStorage.setItem(LINEUP_KEY, JSON.stringify(val))
+  } catch {
+    /* ignore */
   }
+}, { deep: true })
+
+watch(mode, () => syncKillerNumbers())
+
+const isSelected = (name) => selected.value.includes(name)
+const orderOf = (name) => {
+  const i = selected.value.indexOf(name)
+  return i === -1 ? '' : String(i + 1)
+}
+
+function toggleProfile(name) {
+  const i = selected.value.indexOf(name)
+  if (i !== -1) {
+    selected.value.splice(i, 1)
+  } else if (selected.value.length < 6) {
+    selected.value.push(name)
+  }
+  syncKillerNumbers()
+}
+
+async function addProfile() {
+  const name = newName.value.trim()
+  if (!name) return
+  await createPlayer(name)
+  profiles.value = await fetchPlayers()
+  newName.value = ''
+  if (!selected.value.includes(name) && selected.value.length < 6) {
+    selected.value.push(name)
+  }
+  syncKillerNumbers()
+}
+
+// Give every selected player a unique target number for Killer.
+function firstUnused(used) {
+  for (let n = 20; n >= 1; n--) if (!used.has(n)) return n
   return 1
 }
-
-function addPlayer() {
-  if (players.value.length >= 6) return
-  players.value.push(`Player ${players.value.length + 1}`)
-  playerNumbers.value.push(firstUnusedNumber())
+function syncKillerNumbers() {
+  const used = new Set()
+  for (const name of selected.value) {
+    let n = killerNumbers.value[name]
+    if (!n || used.has(n)) {
+      n = firstUnused(used)
+      killerNumbers.value[name] = n
+    }
+    used.add(n)
+  }
 }
-function removePlayer(i) {
-  if (players.value.length <= 1) return
-  players.value.splice(i, 1)
-  playerNumbers.value.splice(i, 1)
-}
-
-// Randomly assign unique target numbers to every player.
 function shuffleNumbers() {
   const pool = Array.from({ length: 20 }, (_, i) => i + 1)
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
     ;[pool[i], pool[j]] = [pool[j], pool[i]]
   }
-  playerNumbers.value = players.value.map((_, i) => pool[i])
+  selected.value.forEach((name, i) => (killerNumbers.value[name] = pool[i]))
 }
 
+const hasDuplicateNumbers = computed(() => {
+  const used = selected.value.map((n) => killerNumbers.value[n])
+  return new Set(used).size !== used.length
+})
+
+const canStart = computed(() => {
+  if (selected.value.length < minPlayers.value) return false
+  if (mode.value === 'killer' && hasDuplicateNumbers.value) return false
+  return true
+})
+
 function start() {
-  if (mode.value === 'killer' && hasDuplicateNumbers.value) return
+  if (!canStart.value) return
   emit('start', {
     mode: mode.value,
     startScore: startScore.value,
     doubleOut: doubleOut.value,
     legsToWin: Number(legsToWin.value),
     startLives: Number(startLives.value),
-    playerNames: players.value,
-    playerNumbers: playerNumbers.value.map((n) => Number(n)),
+    playerNames: [...selected.value],
+    playerNumbers: selected.value.map((name) => Number(killerNumbers.value[name])),
   })
 }
 </script>
@@ -98,6 +136,9 @@ function start() {
       <div class="hero-icon">🎯</div>
       <h1>Darts Scorer</h1>
       <p>Pick a game, add your players, and start throwing.</p>
+      <button type="button" class="stats-link" @click="emit('stats')">
+        📊 Throw heatmap &amp; stats
+      </button>
     </header>
 
     <section class="card">
@@ -183,56 +224,64 @@ function start() {
 
     <section class="card">
       <div class="players-head">
-        <h2>Players <span class="count">{{ players.length }}/6</span></h2>
-        <div class="players-actions">
-          <button
-            v-if="mode === 'killer'"
-            type="button" class="add" @click="shuffleNumbers"
-          >🎲 Shuffle</button>
-          <button type="button" class="add" :disabled="players.length >= 6" @click="addPlayer">
-            + Add
-          </button>
-        </div>
+        <h2>Who's playing? <span class="count">{{ selected.length }}/6</span></h2>
+        <button
+          v-if="mode === 'killer' && selected.length"
+          type="button" class="add" @click="shuffleNumbers"
+        >🎲 Shuffle</button>
       </div>
 
-      <ul class="players">
-        <li v-for="(name, i) in players" :key="i">
-          <span class="idx">{{ i + 1 }}</span>
-          <input
-            v-model="players[i]"
-            type="text"
-            :placeholder="`Player ${i + 1}`"
-            maxlength="16"
-          />
-          <select
-            v-if="mode === 'killer'"
-            v-model.number="playerNumbers[i]"
-            class="num-select"
-            :class="{ dup: hasDuplicateNumbers }"
-            aria-label="Target number"
-          >
-            <option v-for="n in 20" :key="n" :value="n">{{ n }}</option>
-          </select>
-          <button
-            type="button"
-            class="remove"
-            :disabled="players.length <= 1"
-            @click="removePlayer(i)"
-            aria-label="Remove player"
-          >✕</button>
-        </li>
-      </ul>
+      <p class="pick-hint">Tap a profile to add them (tap again to remove). Order = turn order.</p>
 
-      <p v-if="mode === 'killer' && hasDuplicateNumbers" class="dup-warn">
-        Each player needs a different target number.
+      <div class="profiles">
+        <button
+          v-for="p in profiles" :key="p.id"
+          type="button"
+          class="profile" :class="{ on: isSelected(p.name) }"
+          :disabled="!isSelected(p.name) && selected.length >= 6"
+          @click="toggleProfile(p.name)"
+        >
+          <span v-if="isSelected(p.name)" class="pdot">{{ orderOf(p.name) }}</span>
+          <span class="pname">{{ p.name }}</span>
+          <small class="pcount">{{ p.throw_count }} darts</small>
+        </button>
+      </div>
+
+      <form class="add-profile" @submit.prevent="addProfile">
+        <input
+          v-model="newName" type="text" placeholder="New profile name"
+          maxlength="16" autocomplete="off" autocapitalize="words"
+          name="darts-new-profile" spellcheck="false"
+        />
+        <button type="submit" class="add" :disabled="!newName.trim()">+ Add profile</button>
+      </form>
+
+      <div v-if="mode === 'killer' && selected.length" class="killer-numbers">
+        <div class="sub-label">Target numbers</div>
+        <ul class="players">
+          <li v-for="(name, i) in selected" :key="name">
+            <span class="idx">{{ i + 1 }}</span>
+            <span class="sel-name">{{ name }}</span>
+            <select
+              v-model.number="killerNumbers[name]"
+              class="num-select" :class="{ dup: hasDuplicateNumbers }"
+              aria-label="Target number"
+            >
+              <option v-for="n in 20" :key="n" :value="n">{{ n }}</option>
+            </select>
+          </li>
+        </ul>
+        <p v-if="hasDuplicateNumbers" class="dup-warn">
+          Each player needs a different target number.
+        </p>
+      </div>
+
+      <p v-if="mode === 'killer' && selected.length < 2" class="dup-warn">
+        Pick at least 2 players for Killer.
       </p>
     </section>
 
-    <button
-      class="start-btn" type="button"
-      :disabled="mode === 'killer' && hasDuplicateNumbers"
-      @click="start"
-    >
+    <button class="start-btn" type="button" :disabled="!canStart" @click="start">
       Start {{ mode === 'cricket' ? 'Cricket' : mode === 'killer' ? 'Killer' : startScore }}
     </button>
   </div>
@@ -251,6 +300,12 @@ function start() {
 .hero-icon { font-size: 3rem; }
 .hero h1 { margin: 4px 0 4px; font-size: 2rem; letter-spacing: -0.02em; }
 .hero p { margin: 0; color: var(--text-dim); }
+.stats-link {
+  margin-top: 12px; padding: 8px 16px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface);
+  color: var(--text); font-size: 0.9rem; font-weight: 600; cursor: pointer;
+}
+.stats-link:hover { background: var(--surface-2); border-color: var(--accent); }
 
 .card {
   background: var(--surface);
@@ -300,7 +355,7 @@ function start() {
   background: var(--surface-2); color: var(--text); font-size: 1rem;
 }
 
-.players-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 8px; }
+.players-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: 8px; }
 .players-head h2 { margin: 0; }
 .count { color: var(--text-dim); font-size: 0.8rem; }
 .players-actions { display: flex; gap: 8px; }
@@ -310,6 +365,34 @@ function start() {
   white-space: nowrap;
 }
 .add:disabled { opacity: 0.4; cursor: default; }
+
+.pick-hint { margin: 0 0 12px; color: var(--text-dim); font-size: 0.82rem; }
+.profiles { display: flex; flex-wrap: wrap; gap: 10px; }
+.profile {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface-2);
+  color: var(--text); cursor: pointer; font-size: 1rem;
+}
+.profile:disabled { opacity: 0.4; cursor: default; }
+.profile.on { border-color: var(--accent); background: rgba(220, 38, 38, 0.14); }
+.profile .pname { font-weight: 700; }
+.profile .pcount { color: var(--text-dim); font-size: 0.72rem; }
+.pdot {
+  width: 22px; height: 22px; flex: none; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  display: grid; place-items: center; font-size: 0.78rem; font-weight: 800;
+}
+
+.add-profile { display: flex; gap: 8px; margin-top: 14px; }
+.add-profile input {
+  flex: 1; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text);
+  font-size: 0.95rem;
+}
+
+.killer-numbers { margin-top: 18px; }
+.sel-name { flex: 1; font-weight: 700; }
 
 .num-select {
   flex: none; width: 60px; padding: 10px 6px; border-radius: 10px;

@@ -11,27 +11,45 @@ const emit = defineEmits(['throw'])
 const segments = buildSegments()
 const labels = numberLabels()
 const hovered = ref(null)
+const svgEl = ref(null)
 
-function hit(seg) {
+// Convert a click event into board-space coords (matching the -110..110 viewBox)
+// so we can record exactly where on the board the dart landed.
+function boardPoint(evt) {
+  const svg = svgEl.value
+  if (!svg || !evt || typeof svg.createSVGPoint !== 'function') return { x: null, y: null }
+  const pt = svg.createSVGPoint()
+  pt.x = evt.clientX
+  pt.y = evt.clientY
+  const ctm = svg.getScreenCTM()
+  if (!ctm) return { x: null, y: null }
+  const p = pt.matrixTransform(ctm.inverse())
+  return { x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 }
+}
+
+function hit(seg, evt) {
   emit('throw', {
     value: seg.value,
     multiplier: seg.multiplier,
     label: seg.label,
     score: seg.value * seg.multiplier,
+    ...boardPoint(evt),
   })
 }
 
-function hitBull(multiplier) {
+function hitBull(multiplier, evt) {
   emit('throw', {
     value: 25,
     multiplier,
     label: multiplier === 2 ? 'Bull (50)' : '25',
     score: 25 * multiplier,
+    ...boardPoint(evt),
   })
 }
 
-function hitMiss() {
-  emit('throw', { value: 0, multiplier: 1, label: 'Miss', score: 0 })
+function hitMiss(evt) {
+  // A click on the board edge/band still has a location; the button does not.
+  emit('throw', { value: 0, multiplier: 1, label: 'Miss', score: 0, ...boardPoint(evt) })
 }
 
 // Color for a segment based on ring + alternating position.
@@ -44,19 +62,19 @@ function fill(seg) {
 
 <template>
   <div class="board-wrap" :class="{ disabled }">
-    <svg viewBox="-110 -110 220 220" class="board" role="img" aria-label="Dartboard">
+    <svg ref="svgEl" viewBox="-110 -110 220 220" class="board" role="img" aria-label="Dartboard">
       <!-- anything outside the board counts as a miss (0) -->
       <rect
         x="-110" y="-110" width="220" height="220"
         fill="transparent" class="miss-zone"
-        @click="hitMiss"
+        @click="hitMiss($event)"
       />
 
       <!-- outer black ring / number band: a dart landing here also misses -->
       <circle
         cx="0" cy="0" :r="R.boardEdge" fill="var(--board-black)"
         class="miss-zone"
-        @click="hitMiss"
+        @click="hitMiss($event)"
       />
 
       <!-- clickable segments -->
@@ -70,7 +88,7 @@ function fill(seg) {
           :class="{ active: hovered === seg.id }"
           @mouseenter="hovered = seg.id"
           @mouseleave="hovered = null"
-          @click="hit(seg)"
+          @click="hit(seg, $event)"
         >
           <title>{{ seg.label }} = {{ seg.value * seg.multiplier }}</title>
         </path>
@@ -82,7 +100,7 @@ function fill(seg) {
         fill="var(--board-green)" class="segment"
         :class="{ active: hovered === 'bull' }"
         @mouseenter="hovered = 'bull'" @mouseleave="hovered = null"
-        @click="hitBull(1)"
+        @click="hitBull(1, $event)"
       >
         <title>Outer bull = 25</title>
       </circle>
@@ -93,7 +111,7 @@ function fill(seg) {
         fill="var(--board-red)" class="segment"
         :class="{ active: hovered === 'dbull' }"
         @mouseenter="hovered = 'dbull'" @mouseleave="hovered = null"
-        @click="hitBull(2)"
+        @click="hitBull(2, $event)"
       >
         <title>Bullseye = 50</title>
       </circle>
@@ -108,7 +126,7 @@ function fill(seg) {
       </g>
     </svg>
 
-    <button class="miss-btn" type="button" :disabled="disabled" @click="hitMiss">
+    <button class="miss-btn" type="button" :disabled="disabled" @click="hitMiss()">
       Missed the board (0)
     </button>
   </div>

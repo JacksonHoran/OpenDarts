@@ -1,7 +1,9 @@
 # 🎯 Darts Scorer
 
 A Vue 3 web app for scoring darts games with an interactive dartboard. Click the
-spot on the board where each dart lands and the app keeps score for you.
+spot on the board where each dart lands and the app keeps score for you. Every
+dart is recorded (with its exact board location) to a SQLite database so you can
+review a heatmap of where each player throws over time.
 
 ## Features
 
@@ -29,6 +31,11 @@ spot on the board where each dart lands and the app keeps score for you.
   they're pre-filled the next time you open the app.
 - **Best-of legs** — play a single leg or up to 7 (both modes).
 - **Undo** any throw (works across turn boundaries) and **Rematch / New game**.
+- **Dart tracking & heatmap** — every dart's segment *and* its exact board
+  coordinate is saved to a SQLite database, tagged with the player and game mode.
+  The **Throw heatmap & stats** page shows a density heatmap of the board,
+  filterable by player and game, plus totals, board-accuracy, and most-hit spots.
+  Player profiles for Jackson, Miles, Anton and Max are seeded automatically.
 
 ## Run it
 
@@ -37,22 +44,37 @@ npm install
 npm run dev
 ```
 
-Then open the URL Vite prints (default http://localhost:5173).
+`npm run dev` starts both the API server (Express + SQLite, port 3001) and the
+Vite dev server (port 5173, which proxies `/api` to the server). Open
+http://localhost:5173.
 
-To build for production:
+To build and run in production (the server also serves the built frontend):
 
 ```bash
-npm run build && npm run preview
+npm run build
+npm run server   # serves the app + API on http://localhost:3001
 ```
+
+The SQLite file lives at `server/darts.db` and is created automatically on
+first run (it's git-ignored).
 
 ## Project structure
 
-- `src/dartboard.js` — geometry: builds the SVG segment paths and number labels.
-- `src/components/Dartboard.vue` — the clickable board, emits `throw` events (incl. misses).
-- `src/useGame.js` — game state and rules for both modes (X01 scoring/bust/checkouts
-  and Cricket marks/points/closing), plus legs and undo.
-- `src/components/GameSetup.vue` — game-mode and player configuration screen.
-- `src/components/Scoreboard.vue` — per-player score cards (X01).
-- `src/components/CricketBoard.vue` — the marks/points grid (Cricket).
-- `src/components/KillerBoard.vue` — the lives/killer-status cards (Killer).
-- `src/App.vue` — ties setup, board and the mode-specific scoreboard together.
+Frontend (`src/`):
+- `dartboard.js` — geometry: builds the SVG segment paths and number labels.
+- `components/Dartboard.vue` — the clickable board; emits `throw` events with the
+  segment *and* the click's board-space coordinate.
+- `useGame.js` — game state and rules for all three modes (X01, Cricket, Killer),
+  plus legs and undo.
+- `components/GameSetup.vue` — game-mode and player configuration screen.
+- `components/Scoreboard.vue` / `CricketBoard.vue` / `KillerBoard.vue` — the
+  per-mode scoreboards.
+- `components/HeatmapView.vue` — the throw heatmap + stats page (canvas heatmap
+  over a static board, with player/game filters).
+- `api.js` — thin, fail-soft client for the tracking API.
+- `App.vue` — ties setup, board, scoreboards and the heatmap view together.
+
+Backend (`server/`):
+- `db.js` — SQLite schema (`players`, `throws`), seeding, and queries.
+- `index.js` — Express API (`/api/players`, `/api/throws`) that also serves the
+  built frontend in production.

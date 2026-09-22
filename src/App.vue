@@ -1,11 +1,13 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import GameSetup from './components/GameSetup.vue'
 import Dartboard from './components/Dartboard.vue'
 import Scoreboard from './components/Scoreboard.vue'
 import CricketBoard from './components/CricketBoard.vue'
 import KillerBoard from './components/KillerBoard.vue'
+import HeatmapView from './components/HeatmapView.vue'
 import { useGame, KILLER_TO_BECOME } from './useGame.js'
+import { recordThrow } from './api.js'
 
 const {
   state, currentPlayer, turnTotal, turnMarks, canThrow,
@@ -35,13 +37,35 @@ const winner = computed(() =>
   state.winnerId !== null ? state.players.find((p) => p.id === state.winnerId) : null,
 )
 
+// 'home' shows setup/game; 'heatmap' shows the stats page.
+const view = ref('home')
+
 function onStart(config) {
   startGame(config)
+}
+
+// Record the dart (with board coords) for the player throwing, then apply it.
+function onThrow(dart) {
+  if (canThrow.value && currentPlayer.value) {
+    recordThrow({
+      playerName: currentPlayer.value.name,
+      gameMode: state.mode,
+      value: dart.value,
+      multiplier: dart.multiplier,
+      score: dart.score,
+      label: dart.label,
+      x: dart.x,
+      y: dart.y,
+    })
+  }
+  throwDart(dart)
 }
 </script>
 
 <template>
-  <GameSetup v-if="!state.started" @start="onStart" />
+  <HeatmapView v-if="view === 'heatmap'" @back="view = 'home'" />
+
+  <GameSetup v-else-if="!state.started" @start="onStart" @stats="view = 'heatmap'" />
 
   <div v-else class="game">
     <header class="bar">
@@ -132,7 +156,7 @@ function onStart(config) {
 
       <!-- RIGHT: the dartboard clicker -->
       <div class="right-pane">
-        <Dartboard :disabled="!canThrow" @throw="throwDart" />
+        <Dartboard :disabled="!canThrow" @throw="onThrow" />
       </div>
     </div>
 
